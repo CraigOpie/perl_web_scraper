@@ -1,33 +1,21 @@
 #!/usr/bin/perl
+# Usage: perl opieca6.pl [dir]
 
 use strict;
 use warnings;
 
-use URI;
-use autodie;
-
+# Clear the STDOUT buffer
 STDOUT->autoflush;
 
-# Open input file
-open my $in_data, "$ARGV[0]" or die "Can't open input file: $!";
-my @lines = <$in_data>;
-close $in_data;
-
-# Remove line breaks from lines
-chomp @lines;
+# Gather a list of html files in the current directory
+my $dir = $ARGV[0];
+opendir(DIR, $dir) or die "Can't open input directory: $!";
+my @files = grep { /\.html/ } readdir DIR;
+my @temp = grep { /\.html/ } readdir DIR;  # This is only here to get rid of a warning of possible issue due to only using DIR once
+closedir DIR;
 
 # Open output file
 open my $out_data, '>', 'opieca6out.pl' or die "Can't open output file: $!";
-
-# Declare variables
-my @line = '';
-my $table_found = 0;
-my $name = '';
-my $name_ = '';
-my $namec = '';
-my $character = '';
-my $character_ = '';
-my $characterc = '';
 
 # Prepare prolog file
 my $prolog_header = '#!/usr/bin/env swipl
@@ -59,6 +47,7 @@ my $prolog_header = '#!/usr/bin/env swipl
 :- discontiguous acts_in/2.
 :- discontiguous plays/2.
 :- discontiguous played_by/2.
+:- discontiguous directed/2.
 
 /*
     should write out a sensible answer regardless if it passes or fails
@@ -222,101 +211,210 @@ title(the_rise_of_skywalker, star_wars9).
 /*
     database section
 */';
+# print the pre-loaded info into the prolog file
 print $out_data "$prolog_header\n";
 
-# Process Actor and Character Data
-my $line_num = 0;
-for my $each_line (@lines) {
-    if (index($each_line, '<table class="cast_list">') != -1) {
-        $table_found = 1;
-    }
-    if ((index($each_line, '<a href="https://www.imdb.com/name/') != -1) and (index($each_line, '<img height') == -1) and ($table_found == 1)) {
-        @line = split(/>/, $each_line);
-        $name = $line[1];
-        $name =~ s/ //;
-        $name =~ s/'//g;
-        $name =~ s/\.//g;
-        $name =~ s/\(//;
-        $name =~ s/\)//;
-        $name = lc $name;
-        $name_ = $name;
-        $namec = $name;
-        $name_ =~ s/ /_/g;
-        $namec =~ s/ /, /g;
-        print $out_data "proper_noun($name_) --> [$namec].\n";
-        print $out_data "actor($name_).\n";
-        print $out_data "is_a($name_, actor).\n";
-        print $out_data "acts_in($name_, star_wars4).\n";
-    }
-    if ((index($each_line, '<td class="character">') != -1) and ($table_found == 1)) {
-        @line = split(/>/, $lines[$line_num + 1]);
-        @line = split(/</, $line[1]);
-        $character = $line[0];
-        $character =~ s/ //;
-        $character =~ s/'//g;
-        $character =~ s/\(//;
-        $character =~ s/\)//;
-        $character =~ s/#/no_/g;
-        $character =~ s/\.//g;
-        $character = lc $character;
-        if (index($character, 'c-3po') != -1) {$character =~ s/-//;} 
-        $character_ = $character;
-        $characterc = $character;
-        $character_ =~ s/ /_/g;
-        $characterc =~ s/ /, /g;
-        print $out_data "proper_noun($character_) --> [$characterc].\n";
-        print $out_data "character($character_).\n";
-        print $out_data "is_a($character_, character).\n";
-        print $out_data "char_in($character_, star_wars4).\n";
-        print $out_data "plays($name_, $character_).\n";
-        print $out_data "played_by($character_, $name_).\n";
+# parse each file
+foreach my $file(@files) {
+    print "loading:   $file\n";
+    open my $in_data, "<$file" or die "Can't open input file: $!";
+    my @lines = <$in_data>;
+    close $in_data;
 
-    }
-    if ((index($each_line, '</table>') != -1) and ($table_found == 1)) {
-        $table_found = 0;
-        $line_num = 0;
-        last;
-    }
-    $line_num += 1;
-}
+    # Remove line breaks from lines
+    chomp @lines;
 
-for my $each_line (@lines) {
-    if (index($each_line, '<h1 class="header"> <span class="itemprop">') != -1) {
-        @line = split(/>/, $each_line);
-        @line = split(/</, $line[1]);
-        $name = $line[0];
-        $name =~ s/'//g;
-        $name =~ s/\.//g;
-        $name =~ s/\(//;
-        $name =~ s/\)//;
-        $name = lc $name;
-        $name_ = $name;
-        $namec = $name;
-        $name_ =~ s/ /_/g;
-        $namec =~ s/ /, /g;
-    }
-    if (index($each_line, '<div id="filmography">') != -1) {
-        $table_found = 1;
-    }
-    if (((index($each_line, 'Movie)') != -1) or (index($each_line, 'Video)') != -1)) and ($table_found == 1)) {
-        @line = split(/>/, $lines[$line_num - 1]);
-        @line = split(/</, $line[1]);
-        $title = $line[0];
-        $title =~ s/ //;
-        $title =~ s/'//g;
-        $title =~ s/\(//;
-        $title =~ s/\)//;
-        $title =~ s/#/no_/g;
-        $title =~ s/\.//g;
-        $title = lc $title;
-    }
-    if ((index($each_line, '</table>') != -1) and ($table_found == 1)) {
-        $table_found = 0;
-        $line_num = 0;
-        last;
-    }
-    $line_num += 1;
+    # Declare variables
+    my @line = '';
+    my $table_found = 0;
+    my $is_director = 0;
+    my $line_num = 0;
+    my $name = '';
+    my $name_ = '';
+    my $namec = '';
+    my $character = '';
+    my $character_ = '';
+    my $characterc = '';
+    my $title = '';
+    my $title_ = '';
+    my $titlec = '';
+
     
+
+    # Process Actor and Character Data
+    for my $each_line (@lines) {
+        # start of correct table
+        if (index($each_line, '<table class="cast_list">') != -1) {
+            $table_found = 1;
+        }
+        # process the actor's name
+        if ((index($each_line, '<a href="https://www.imdb.com/name/') != -1) and (index($each_line, '<img height') == -1) and ($table_found == 1)) {
+            @line = split(/>/, $each_line);
+            $name = $line[1];
+            $name =~ s/^\s+//;
+            $name =~ s/\s+$//;
+            $name =~ s/'//g;
+            $name =~ s/\.//g;
+            $name =~ s/\(//;
+            $name =~ s/\)//;
+            $name = lc $name;
+            $name_ = $name;
+            $namec = $name;
+            $name_ =~ s/ /_/g;
+            $namec =~ s/ /, /g;
+            print $out_data "proper_noun($name_) --> [$namec].\n";
+            print $out_data "actor($name_).\n";
+            print $out_data "is_a($name_, actor).\n";
+            print $out_data "acts_in($name_, star_wars4).\n";
+        }
+        # process the actor's character
+        if ((index($each_line, '<td class="character">') != -1) and ($table_found == 1)) {
+            @line = split(/>/, $lines[$line_num + 1]);
+            @line = split(/</, $line[1]);
+            $character = $line[0];
+            $name =~ s/^\s+//;
+            $name =~ s/\s+$//;
+            $character =~ s/'//g;
+            $character =~ s/\(//;
+            $character =~ s/\)//;
+            $character =~ s/#/no_/g;
+            $character =~ s/\.//g;
+            $character = lc $character;
+            if (index($character, 'c-3po') != -1) {$character =~ s/-//;} 
+            $character_ = $character;
+            $characterc = $character;
+            $character_ =~ s/ /_/g;
+            $characterc =~ s/ /, /g;
+            print $out_data "proper_noun($character_) --> [$characterc].\n";
+            print $out_data "character($character_).\n";
+            print $out_data "is_a($character_, character).\n";
+            print $out_data "char_in($character_, star_wars4).\n";
+            print $out_data "plays($name_, $character_).\n";
+            print $out_data "played_by($character_, $name_).\n";
+
+        }
+        # end of table
+        if ((index($each_line, '</table>') != -1) and ($table_found == 1)) {
+            $table_found = 0;
+            last;
+        }
+        $line_num += 1;
+    }
+
+    # reset variables between file types
+    # Process individual information about actor
+    $table_found = 0;
+    $line_num = 0;  # probably a better way to do this, like with python but didn't put much effort into figuring it out
+    for my $each_line (@lines) {
+        # find the person's name
+        if (index($each_line, '<h1 class="header"> <span class="itemprop">') != -1) {
+            @line = split(/>/, $each_line);
+            @line = split(/</, $line[2]);
+            $name = $line[0];
+            $name =~ s/^\s+//;
+            $name =~ s/\s+$//;
+            $name =~ s/'//g;
+            $name =~ s/\.//g;
+            $name =~ s/\,//g;
+            $name =~ s/\(//g;
+            $name =~ s/\)//g;
+            $name =~ s/\- //g;
+            $name =~ s/\!//g;
+            $name =~ s/__/_/g;
+            $name =~ s/_ / /g;
+            $name =~ s/\&amp//g;
+            $name = lc $name;
+            $name_ = $name;
+            $namec = $name;
+            $name_ =~ s/ /_/g;
+            $namec =~ s/ /, /g;
+            print $out_data "proper_noun($name_) --> [$namec].\n";
+            print $out_data "actor($name_).\n";
+            print $out_data "is_a($name_, actor).\n";
+        }
+        # when in the correct table
+        if (index($each_line, '<div id="filmography">') != -1) {
+            $table_found = 1;
+        }
+        # process the movie or video titles
+        if (((index($each_line, 'Movie)') != -1) or (index($each_line, 'Video)') != -1)) and ($table_found == 1)) {
+            @line = split(/>/, $lines[$line_num-1]);
+            @line = split(/</, $line[2]);
+            $title = $line[0];
+            $name =~ s/^\s+//;
+            $name =~ s/\s+$//;
+            $title =~ s/'//g;
+            $title =~ s/\(//;
+            $title =~ s/\)//;
+            $title =~ s/#/no_/g;
+            $title =~ s/\.//g;
+            $title =~ s/\,//g;
+            $title =~ s/\://g;
+            $title =~ s/\;//g;
+            $title =~ s/\!//g;
+            $title =~ s/\- //;
+            $title =~ s/\_\_/\_/g;
+            $title =~ s/\_ / /g;
+            $title =~ s/ \_/ /g;
+            $title =~ s/\&amp//g;
+            $title = lc $title;
+            $title =~ tr/[⁰¹²³⁴⁵⁶⁷⁸⁹]/[0123456789]/;
+            $title_ = $title;
+            $titlec = $title;
+            $title_ =~ s/ /_/g;
+            $titlec =~ s/ /, /g;
+            $title_ =~ s/\_\_/\_/g;
+            $titlec =~ s/ \, / /g;
+            print $out_data "acts_in($name_, $title_).\n";
+            print $out_data "proper_noun($title_) --> [$titlec].\n";
+        }
+        # determine if the person is a director
+        if (index($each_line, '<a name="director">Director</a>') != -1) {
+            $is_director = 1;
+            print $out_data "is_a($name_, director).\n";
+        }
+        # process works directed
+        if ((index($each_line, 'id="director-') != -1) and ($is_director == 1)) {
+            @line = split(/>/, $lines[$line_num+4]);
+            @line = split(/</, $line[2]);
+            $title = $line[0];
+            $name =~ s/^\s+//;
+            $name =~ s/\s+$//;
+            $title =~ s/'//g;
+            $title =~ s/\(//;
+            $title =~ s/\)//;
+            $title =~ s/#/no_/g;
+            $title =~ s/\.//g;
+            $title =~ s/\,//g;
+            $title =~ s/\://g;
+            $title =~ s/\;//g;
+            $title =~ s/\!//g;
+            $title =~ s/\- //;
+            $title =~ s/\_\_/\_/g;
+            $title =~ s/\_ / /g;
+            $title =~ s/ \_/ /g;
+            $title =~ s/\&amp//g;
+            $title = lc $title;
+            $title =~ tr/[⁰¹²³⁴⁵⁶⁷⁸⁹]/[0123456789]/;
+            $title_ = $title;
+            $titlec = $title;
+            $title_ =~ s/ /_/g;
+            $titlec =~ s/ /, /g;
+            $title_ =~ s/\_\_/\_/g;
+            $titlec =~ s/ \, / /g;
+            print $out_data "directed($name_, $title_).\n";
+        }
+        # found the end of the table
+        if ((index($each_line, '</table>') != -1) and ($table_found == 1)) {
+            $table_found = 0;
+            last;
+        }
+        $line_num += 1;
+        
+    }
+    # notify the user that the information was successfully parsed
+    print "completed: $file\n";
 }
 
+# close the output file
 close $out_data;
